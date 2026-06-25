@@ -1,0 +1,25 @@
+# cloudflared tunnel config for tscribe-class-carnyx
+# Copy to ~/.cloudflared/config.yml on carnyx and fill in the IDs.
+#
+#   cloudflared tunnel login
+#   cloudflared tunnel create tscribe-carnyx
+#   cloudflared tunnel route dns tscribe-carnyx tscribe-api.<your-domain>
+#   cloudflared tunnel run tscribe-carnyx   (or install as a service)
+
+tunnel: <TUNNEL_UUID>
+credentials-file: /home/<user>/.cloudflared/<TUNNEL_UUID>.json
+
+ingress:
+  - hostname: tscribe-api.<your-domain>
+    service: http://127.0.0.1:6390
+    originRequest:
+      # Transcription jobs are async (POST returns immediately, then poll), so
+      # the long work never holds an HTTP connection open. These timeouts cover
+      # the short download/poll requests with headroom.
+      connectTimeout: 30s
+      noTLSVerify: true
+  - service: http_status:404
+
+# NOTE: Cloudflare's proxied request-body limit (100 MB Free/Pro, 200 MB
+# Business, 500 MB Enterprise) applies here. Prefer POST /jobs with audio_url so
+# carnyx pulls the file itself and large uploads never cross the edge.

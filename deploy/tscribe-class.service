@@ -1,0 +1,21 @@
+# systemd unit for the tscribe-class-carnyx server.
+# Install: sudo cp deploy/tscribe-class.service /etc/systemd/system/
+#          sudo systemctl daemon-reload && sudo systemctl enable --now tscribe-class
+# Secrets live in /etc/tscribe-class.env (chmod 600), NOT in this unit.
+
+[Unit]
+Description=tscribe-class-carnyx (verified class transcription server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=danielramirez
+WorkingDirectory=/home/danielramirez/repos/tscribe-class-carnyx
+EnvironmentFile=/etc/tscribe-class.env
+ExecStart=/home/danielramirez/.local/bin/uv run uvicorn server.app:app --host 127.0.0.1 --port 6390
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
