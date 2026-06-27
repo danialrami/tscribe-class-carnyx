@@ -22,22 +22,37 @@ transcript it couldn't prove.
 | Route | Auth | Purpose |
 |-------|------|---------|
 | `GET /healthz` | none | liveness |
-| `POST /jobs` | `X-API-Key` | **primary** — JSON `{"audio_url": "..."}`; carnyx *pulls* the audio (no tunnel body limit) |
+| `POST /jobs` | `X-API-Key` | **primary** — JSON `{"drive_file_id": "..."}`; carnyx downloads via the service account and (optionally) writes the transcript back |
 | `POST /jobs/upload` | `X-API-Key` | secondary — multipart file upload (only for files under the tunnel's ~100 MB limit) |
-| `GET /jobs/{id}` | `X-API-Key` | poll status; on `done`, returns `transcript` + `report` |
+| `GET /jobs/{id}` | `X-API-Key` | poll status; on `done`, returns `transcript`, `report`, and (if written back) `transcript_file_id` |
 
-### Why `audio_url` is the primary path
+### `POST /jobs` body
+
+```json
+{
+  "drive_file_id": "<audio file id>",      // preferred (service-account download)
+  "audio_url":     "<public link>",         // fallback for sub-100 MB public files
+  "dest_folder_id":"<dated folder id>",     // optional: write the transcript back here
+  "move_file_ids": ["<id>", "<id>"],        // optional: group these into dest_folder_id
+  "source_name":   "20260629_class.m4a"     // optional: name for audio/transcript stem
+}
+```
+
+### Why the service account (`drive_file_id`) is the primary path
 
 Cloudflare's proxied-body limit (100 MB Free/Pro, 200 MB Business, 500 MB Ent)
-**applies to tunnels** and returns `413` on a too-large upload. A 4-hour class is
-~230 MB. With `audio_url`, carnyx downloads the file itself (outbound, no edge
-limit); only a small JSON request and the small transcript cross the tunnel. See
-[deploy/README.md](deploy/README.md).
+**applies to tunnels** and returns `413` on a too-large upload — a 4-hour class is
+~230 MB. And public download links for files **>100 MB** hit Drive's virus-scan
+interstitial. The service account sidesteps both: carnyx downloads the file by id
+via the Drive API (any size, no interstitial, outbound), then writes the verified
+transcript back to `dest_folder_id` and groups the source assets with a
+non-destructive **move**. Only a small JSON request and the small transcript cross
+the tunnel. See [deploy/README.md](deploy/README.md).
 
-> Google Drive caveat: direct-download links for files **>100 MB** hit Drive's
-> virus-scan interstitial and need the `confirm=` token (or the Drive API with an
-> access token). Use an API-authenticated download for real 4-hour classes; the
-> 44 MB orientation file downloads cleanly either way.
+**Data safety:** the transcript text is always returned in the job result even if
+the Drive write-back fails (`upload_error` is reported, the transcript is never
+lost). Grouping uses move (reparent), never copy-then-delete, and nothing is
+hard-deleted.
 
 ## Run locally
 
@@ -60,6 +75,7 @@ uvicorn server.app:app --host 127.0.0.1 --port 6390
 | `TSCRIBE_WORKERS` | 2 | parallel transcription workers |
 | `TSCRIBE_SNAP_WINDOW_S` | 10 | silence-snap window for chunk seams |
 | `TSCRIBE_MAX_AUDIO_BYTES` | 2 GiB | upload/pull sanity guard |
+| `CARNYX_DRIVE_SA_JSON` | `./credentials/*.json` | path to the Drive service-account key (falls back to `GOOGLE_APPLICATION_CREDENTIALS`, then autodiscovery in `credentials/`) |
 
 ## Tests
 

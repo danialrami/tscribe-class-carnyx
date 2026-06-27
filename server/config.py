@@ -21,6 +21,9 @@ class Settings:
     # Max bytes the server will accept for a direct upload or pull (sanity guard).
     max_audio_bytes: int = int(os.environ.get("TSCRIBE_MAX_AUDIO_BYTES", str(2 * 1024 ** 3)))
     download_timeout_s: int = int(os.environ.get("TSCRIBE_DOWNLOAD_TIMEOUT_S", "600"))
+    # Optional explicit path to the Drive service-account JSON. If empty,
+    # server.drive falls back to $GOOGLE_APPLICATION_CREDENTIALS or ./credentials/*.json.
+    drive_sa_json: str = field(default_factory=lambda: os.environ.get("CARNYX_DRIVE_SA_JSON", ""))
 
 
 SETTINGS = Settings()

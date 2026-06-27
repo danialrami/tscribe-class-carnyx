@@ -90,7 +90,7 @@ def test_upload_job_is_verified(tone_wav):
 def test_audio_url_pull_path(tone_wav, monkeypatch):
     # carnyx-pulls-from-URL branch: stub the download to copy the local fixture.
     import shutil
-    monkeypatch.setattr(jobs, "_download", lambda url, dest: shutil.copy(tone_wav, dest))
+    monkeypatch.setattr(jobs, "_download_url", lambda url, dest: shutil.copy(tone_wav, dest))
     r = client.post("/jobs", headers={"X-API-Key": "test-key"},
                     json={"audio_url": "https://example.com/tone.wav"})
     assert r.status_code == 200
