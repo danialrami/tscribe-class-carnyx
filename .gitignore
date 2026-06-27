@@ -6,3 +6,4 @@ uv.lock
 .env
 *.egg-info/
 .pytest_cache/
+credentials/
