@@ -1,6 +1,6 @@
 [project]
 name = "tscribe-class-carnyx"
-version = "0.1.0"
+version = "0.2.0"
 description = "Thin HTTP server wrapping tscribe's verified class_pipeline, for carnyx behind a Cloudflare Tunnel."
 requires-python = ">=3.10"
 dependencies = [
@@ -8,8 +8,10 @@ dependencies = [
     "uvicorn[standard]>=0.29",
     "python-multipart>=0.0.9",
     "requests>=2.31",
+    # Service-account Drive I/O (download big files, write transcript back, move/group).
+    "google-api-python-client>=2.120",
+    "google-auth>=2.29",
     # The transcription/verification logic — single source of truth.
-    # Requires the class_pipeline package (tscribe-transcription-tool PR #1).
     "transcription-tool @ git+ssh://git@github.com/danialrami/tscribe-transcription-tool.git",
 ]
 

@@ -30,6 +30,25 @@ sudo chmod 600 /etc/tscribe-class.env
 Note the `TSCRIBE_API_KEY` — the cloud agent needs the same value. The server
 **fails closed** (503) if it isn't set, so it never runs open to the internet.
 
+## 2b. Google Drive service account (read/download/write-back)
+
+So carnyx can download big audio by file id and write the transcript back:
+
+1. In Google Cloud Console: a project → enable **Google Drive API** → create a
+   **service account** → add a **JSON key** (download it).
+2. In Google Drive, share the parent `class-recordings-notes` folder with the
+   service-account email as **Editor** (this also lets carnyx move/group files).
+3. Put the JSON in `./credentials/` (already gitignored). The server finds it via,
+   in order: `CARNYX_DRIVE_SA_JSON` → `GOOGLE_APPLICATION_CREDENTIALS` → the first
+   `*.json` in `credentials/`. To be explicit, add to `/etc/tscribe-class.env`:
+
+   ```bash
+   CARNYX_DRIVE_SA_JSON=/home/carnyx/repos/tscribe-class-carnyx/credentials/<key>.json
+   ```
+
+The key is a credential — keep it `chmod 600`, never commit it. Scope used is
+`drive`, but the account can only touch what you've shared with it (that folder).
+
 ## 3. Run it
 
 ```bash
