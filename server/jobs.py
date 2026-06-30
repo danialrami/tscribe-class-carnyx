@@ -141,6 +141,16 @@ def _run(
                         job.moved.append(fid)
                     except Exception as e:  # noqa: BLE001
                         job.move_errors.append(f"{fid}: {type(e).__name__}: {e}")
+            elif move_file_ids and not job.transcript_file_id:
+                # Honest failure: grouping is deliberately gated on a successful
+                # write-back, so a failed upload means the sources are NOT moved.
+                # Record *why* per file instead of leaving a silent empty
+                # `moved: []` that reads like nothing was ever requested.
+                reason = job.upload_error or "transcript write-back returned no file id"
+                for fid in move_file_ids:
+                    job.move_errors.append(
+                        f"{fid}: skipped grouping — transcript write-back failed ({reason})"
+                    )
 
         job.touch("done")
     except ContractViolation as e:

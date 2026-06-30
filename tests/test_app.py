@@ -97,3 +97,51 @@ def test_audio_url_pull_path(tone_wav, monkeypatch):
     result = _wait(r.json()["id"])
     assert result["status"] == "done", result.get("error")
     assert result["report"]["ok"] is True
+
+
+def test_grouping_skip_logged_when_writeback_fails(tone_wav, monkeypatch):
+    """A failed transcript write-back must not silently drop the grouping move.
+
+    The move is deliberately gated on a successful write-back, so when the
+    upload dies (e.g. a stale-connection BrokenPipeError), the sources are NOT
+    grouped — and that skip is logged per source file rather than surfacing as a
+    silent empty `moved: []`. The verified transcript is still kept, and the
+    move is never even attempted.
+    """
+    import shutil
+    from server import drive as drive_mod
+
+    monkeypatch.setattr(jobs, "_download_url", lambda url, dest: shutil.copy(tone_wav, dest))
+
+    def _broken_pipe(*a, **k):
+        raise BrokenPipeError(32, "Broken pipe")
+
+    monkeypatch.setattr(drive_mod, "upload_text", _broken_pipe)
+
+    move_calls = []
+    monkeypatch.setattr(drive_mod, "move_file", lambda fid, dest: move_calls.append(fid))
+
+    job = jobs.submit(
+        audio_url="https://example.com/tone.wav",
+        dest_folder_id="DEST",
+        move_file_ids=["AUDIO_ID", "NOTES_ID"],
+        source_name="tone.wav",
+    )
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        j = jobs.get_job(job.id)
+        if j.status in ("done", "failed"):
+            break
+        time.sleep(0.2)
+    j = jobs.get_job(job.id)
+
+    assert j.status == "done", j.error
+    assert j.transcript  # transcript still safe despite the failed upload
+    assert j.transcript_file_id is None
+    assert "BrokenPipeError" in (j.upload_error or "")
+    assert j.moved == []
+    assert move_calls == []  # move never attempted after a failed write-back
+    assert len(j.move_errors) == 2  # one honest skip entry per requested move
+    assert all("skipped grouping" in e for e in j.move_errors)
+    assert all("BrokenPipeError" in e for e in j.move_errors)
