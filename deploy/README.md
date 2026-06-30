@@ -87,9 +87,11 @@ A too-large `POST /jobs/upload` returns **413**. The 44 MB orientation file is
 fine; a ~230 MB 4-hour class is **not** on Free/Pro.
 
 **The fix is architectural, not a plan upgrade:** use `POST /jobs` with
-`audio_url`. carnyx downloads the audio itself (outbound — the limit only applies
-to *inbound proxied bodies*), so only a tiny JSON request and the small transcript
-cross the tunnel. The big file never touches the edge limit.
+`drive_file_id` (preferred — any size, no public link, service-account download)
+or `audio_url` (public-link fallback). carnyx downloads the audio itself
+(outbound — the limit only applies to *inbound proxied bodies*), so only a tiny
+JSON request and the small transcript cross the tunnel. The big file never
+touches the edge limit.
 
 Two more options if you ever want direct upload of a big file:
 - **Chunk client-side** under 100 MB each (the pipeline's 15-min WAV chunks are

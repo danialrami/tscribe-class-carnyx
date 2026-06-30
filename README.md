@@ -75,6 +75,7 @@ uvicorn server.app:app --host 127.0.0.1 --port 6390
 | `TSCRIBE_WORKERS` | 2 | parallel transcription workers |
 | `TSCRIBE_SNAP_WINDOW_S` | 10 | silence-snap window for chunk seams |
 | `TSCRIBE_MAX_AUDIO_BYTES` | 2 GiB | upload/pull sanity guard |
+| `TSCRIBE_DOWNLOAD_TIMEOUT_S` | 600 | timeout (seconds) for pulling audio via `audio_url` |
 | `CARNYX_DRIVE_SA_JSON` | `./credentials/*.json` | path to the Drive service-account key (falls back to `GOOGLE_APPLICATION_CREDENTIALS`, then autodiscovery in `credentials/`) |
 
 ## Tests
