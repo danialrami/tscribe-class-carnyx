@@ -57,6 +57,40 @@ sudo systemctl daemon-reload && sudo systemctl enable --now tscribe-class
 curl -s http://127.0.0.1:6390/healthz   # {"ok": true, ...}
 ```
 
+## 3b. Updating the pipeline (read this before you `uv sync`)
+
+The verification logic lives in a **separate repo**
+(`danialrami/tscribe-transcription-tool` → `transcription_tool.class_pipeline`),
+pinned here as a git dependency. `uv` resolves git dependencies to a **commit sha**
+in `uv.lock`, so a plain `uv sync` will happily reinstall the *same old commit*
+even after that repo's `main` has moved. It exits 0 and changes nothing.
+
+That is the worst kind of deploy: it looks done. Force the upgrade explicitly:
+
+```bash
+cd ~/repos/tscribe-class-carnyx
+uv lock --upgrade-package transcription-tool
+uv sync
+sudo systemctl restart tscribe-class
+curl -s http://127.0.0.1:6390/healthz
+```
+
+**Verify which code is actually live.** `/healthz` does not report a version, so
+confirm from the contract itself — the installed source is the source of truth:
+
+```bash
+uv run python -c "
+import inspect, transcription_tool.class_pipeline.verify as v
+print(inspect.getsourcefile(v))
+print('speech-rate contract present:', hasattr(v, '_chunk_levels'))
+print('contract fields:', sorted(f for f in v.Contract.__dataclass_fields__))
+"
+```
+
+A job's verify report is the other honest signal: a run on the current contract
+emits `chunk[i].wpm_above_floor` / `wpm_under_ceiling`. If you still see the old
+`chunk[i].wpm_in_band`, the box is running stale code and the upgrade didn't take.
+
 ## 4. Cloudflare Tunnel
 
 ```bash
