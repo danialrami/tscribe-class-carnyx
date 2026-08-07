@@ -87,6 +87,48 @@ def test_healthz_open():
     assert client.get("/healthz").json()["ok"] is True
 
 
+def test_version_requires_the_api_key():
+    """Provenance is operational detail. /healthz is reachable by anyone who can
+    resolve the tunnel; which commit is deployed is not for anonymous callers."""
+    assert client.get("/version").status_code == 401
+
+
+def test_healthz_stays_public_and_says_nothing_about_the_build():
+    body = client.get("/healthz").json()
+    assert body == {"ok": True, "service": "tscribe-class-carnyx"}
+
+
+def test_version_reports_the_running_process_not_the_venv():
+    """The check this replaces (`uv run python -c ...`) reads the venv, so it
+    printed the right answers before the service had restarted. This is served BY
+    the process, so a stale server cannot report fresh code."""
+    body = client.get("/version", headers={"X-API-Key": "test-key"}).json()
+    assert body["service"] == "tscribe-class-carnyx"
+    pipe = body["pipeline"]
+    # Fingerprint is derived from the imported module, so it is always available.
+    assert len(pipe["contract_fingerprint"]) == 12
+    assert pipe["contract_fields"] > 0 and pipe["contract_checks"] > 0
+    # commit/version come from the installed distribution's direct_url.json and
+    # are absent when the pipeline is on PYTHONPATH rather than pip-installed.
+    # Missing must mean "could not determine", never a wrong answer.
+    if "commit" in pipe:
+        assert len(pipe["commit"]) == 40
+
+
+def test_version_never_500s_when_provenance_is_unavailable(monkeypatch):
+    """A build-info route that can fail is a route that pages you at 2am for
+    nothing. Missing keys, never an exception."""
+    from server import app as app_module
+    app_module.pipeline_build.cache_clear()
+    monkeypatch.setattr(app_module, "json", None)  # break provenance lookup hard
+    try:
+        r = client.get("/version", headers={"X-API-Key": "test-key"})
+        assert r.status_code == 200
+        assert "pipeline" in r.json()
+    finally:
+        app_module.pipeline_build.cache_clear()
+
+
 def test_auth_required(tone_wav):
     with open(tone_wav, "rb") as f:
         r = client.post("/jobs/upload", files={"file": ("tone.wav", f, "audio/wav")})
