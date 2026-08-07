@@ -11,6 +11,11 @@ Auth: every non-health route requires the `X-API-Key` header to match
 TSCRIBE_API_KEY. Preferred input is `drive_file_id` — carnyx downloads it via
 the service account (any size, no public link, no tunnel body limit) and can
 write the transcript back to `dest_folder_id`.
+
+Reading a `GET /jobs/{id}` response: `verified` is the only field that authorises
+use of the transcript. A **failed** job may still carry a `transcript` and a
+`report` so the failure can be audited — that transcript is evidence, not a
+deliverable.
 """
 
 from __future__ import annotations
