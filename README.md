@@ -21,7 +21,8 @@ transcript it couldn't prove.
 
 | Route | Auth | Purpose |
 |-------|------|---------|
-| `GET /healthz` | none | liveness |
+| `GET /healthz` | none | liveness — deliberately says nothing about the build |
+| `GET /version` | `X-API-Key` | which pipeline commit **this process** imported (see below) |
 | `POST /jobs` | `X-API-Key` | **primary** — JSON `{"drive_file_id": "..."}`; carnyx downloads via the service account and (optionally) writes the transcript back |
 | `POST /jobs/upload` | `X-API-Key` | secondary — multipart file upload (only for files under the tunnel's ~100 MB limit) |
 | `GET /jobs/{id}` | `X-API-Key` | poll status; returns `verified`, and on `done` the `transcript`, `report`, and (if written back) `transcript_file_id` |
@@ -37,6 +38,32 @@ transcript it couldn't prove.
   "source_name":   "20260629_class.m4a"     // optional: name for audio/transcript stem
 }
 ```
+
+### Answering "which code is live?"
+
+`GET /version` reports the commit the **running process** actually imported, read
+from the installed distribution's `direct_url.json`:
+
+```json
+{"service":"tscribe-class-carnyx","server_version":"0.2.0",
+ "pipeline":{"version":"0.1.0","commit":"9d1e4924...","contract_fingerprint":"bffec2f0d893",
+             "contract_fields":17,"contract_checks":8}}
+```
+
+This exists because the obvious check was wrong. `deploy/README.md` §3b told you to
+run `uv run python -c ...` on the box — but that interrogates the **venv**, not the
+running service. On 2026-08-07 it printed the expected answers *before* the restart
+had happened, so it would have certified a stale server: the exact "it looks done"
+failure §3b was written to warn about, reproduced by the tool meant to detect it.
+Served by the process, a stale server cannot report fresh code.
+
+`contract_fingerprint` hashes the contract's field and check names, so it moves when
+the contract's *shape* changes and not when a docstring does — which catches a hand
+edit on the box that no commit sha would reveal.
+
+It is authenticated on purpose. `/healthz` is reachable by anyone who can resolve
+the tunnel, and an anonymous caller has no business learning which commit is
+deployed. Provenance is operational detail; liveness is not.
 
 ### Reading a job: `verified` is the only field that authorises use
 
