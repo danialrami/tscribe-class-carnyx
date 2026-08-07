@@ -10,6 +10,13 @@ Single source of truth: the algorithm is `transcription_tool.class_pipeline`.
 Data-safety: the transcript text is always kept in the job result even if the
 Drive write-back fails; asset grouping uses non-destructive moves and only runs
 after a successful, verified transcript. Nothing here deletes an original.
+
+That last principle used to have a hole in it: a **contract failure** discarded
+everything. The transcript was never assigned, the report never stored, and a
+four-hour GPU run reduced to one line of prose — which on 2026-08-06 was a line
+the checker had not earned. A failed job now keeps its transcript and its full
+report so the verdict can be audited, while `status` stays `failed`, `verified`
+stays false, and nothing is written back to Drive. Flag, don't delete.
 """
 
 from __future__ import annotations
@@ -50,10 +57,22 @@ class Job:
         self.status = status
         self.updated_at = time.time()
 
+    @property
+    def verified(self) -> bool:
+        """True only when the contract actually passed.
+
+        A failed job can now carry a transcript, so callers need an unambiguous
+        way to ask "may I use this?" that does not amount to "is a transcript
+        present?". `status == "done"` already implies this; the explicit flag
+        exists so no consumer has to infer it.
+        """
+        return self.status == "done" and bool(self.report and self.report.get("ok"))
+
     def public(self) -> dict:
         return {
             "id": self.id,
             "status": self.status,
+            "verified": self.verified,
             "source": self.source,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
@@ -154,7 +173,17 @@ def _run(
 
         job.touch("done")
     except ContractViolation as e:
+        # Keep the evidence. The gate is unchanged — status stays `failed`,
+        # `verified` stays False, nothing is written back to Drive, no source is
+        # moved, and the client still exits non-zero — but the report and the
+        # unverified transcript are retained so the verdict can be audited and,
+        # when a check turns out to have misfired, the day's work recovered
+        # without spending another multi-hour run to see what happened.
         job.error = f"ContractViolation: {e}"
+        if getattr(e, "report", None) is not None:
+            job.report = _report_to_dict(e.report)
+        if getattr(e, "transcript", None):
+            job.transcript = e.transcript
         job.touch("failed")
     except Exception as e:  # noqa: BLE001 - report any failure honestly
         job.error = f"{type(e).__name__}: {e}"
