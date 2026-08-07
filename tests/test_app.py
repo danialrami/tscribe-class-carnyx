@@ -27,6 +27,23 @@ from server import config, jobs  # noqa: E402
 client = TestClient(app_module.app)
 
 
+# Deterministic non-repetitive filler. " ".join(["lorem"] * n) is 100%
+# back-to-back repetition, which the pipeline's degeneracy check correctly reads
+# as a transcriber loop. Synthetic text standing in for speech has to look like
+# speech in the ways the contract measures.
+_VOCAB = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo "
+          "lima mike november oscar papa quebec romeo sierra tango uniform "
+          "victor whiskey xray yankee zulu").split()
+
+
+def _words(n: int, seed: int = 1234) -> str:
+    import random
+    rng = random.Random(seed)
+    return " ".join(rng.choice(_VOCAB) for _ in range(n))
+
+
+
+
 class MockTranscriber:
     def transcribe(self, audio_path: str):
         from transcription_tool.class_pipeline.verify import _mean_volume_db
@@ -34,7 +51,7 @@ class MockTranscriber:
         if (_mean_volume_db(audio_path) or -99) <= -45.0:
             return "", None
         dur = probe_duration(audio_path)
-        return " ".join(["lorem"] * max(1, int(120 * dur / 60.0))), None
+        return _words(max(1, int(120 * dur / 60.0))), None
 
 
 @pytest.fixture(autouse=True)
