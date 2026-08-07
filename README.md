@@ -152,5 +152,11 @@ report while leaving `verified` false and writing nothing back**
 
 ## Deploy
 
+**Redeploying after 2026-08-07? Start with [next-steps.md](next-steps.md)** — it
+carries the full change log, the prep checklist (including exactly what the CI PAT
+can and cannot do), and separate step-by-step runbooks for carnyx and tambora.
+
 See [deploy/README.md](deploy/README.md) for the Cloudflare Tunnel setup, the
-systemd unit, and the file-size guidance.
+systemd unit, and the file-size guidance. Note that its §3b "prove which code is
+live" snippet reads the **venv**, not the running process — use `GET /version`
+instead; see next-steps.md §2.4.
