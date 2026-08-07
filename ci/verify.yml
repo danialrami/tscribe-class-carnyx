@@ -1,0 +1,93 @@
+name: verify
+
+# Push is limited to main so a PR branch doesn't run twice.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: [self-hosted, lufs]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: System toolchain
+        # Jobs run as root on the fleet, so no sudo. The setup-python
+        # action is banned by the house rules (no arm64 prebuilt). ffmpeg is required:
+        # these tests drive the real class_pipeline over generated audio.
+        run: |
+          set -euo pipefail
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            python3 python3-venv ffmpeg git
+          python3 --version
+          ffmpeg -version | head -1
+
+      - name: Resolve the pinned pipeline commit
+        # This is why uv.lock is committed. CI tests the exact pipeline commit
+        # production runs, not whatever happens to be on the tool's default
+        # branch -- which, before the lock was committed, is precisely what a
+        # fresh deploy would have installed, unreviewed.
+        run: |
+          set -euo pipefail
+          pin=$(grep -o 'tscribe-transcription-tool\.git#[0-9a-f]\{40\}' uv.lock \
+                | head -1 | cut -d'#' -f2)
+          if [ -z "$pin" ]; then
+            echo "no transcription-tool commit pinned in uv.lock" >&2
+            exit 1
+          fi
+          echo "PIPELINE_PIN=$pin" >> "$GITHUB_ENV"
+          echo "pinned pipeline commit: $pin"
+
+      - name: Test environment
+        env:
+          TOOL_TOKEN: ${{ secrets.TSCRIBE_TOOL_TOKEN }}
+        # The pipeline is a private-repo git dependency, so it needs a read
+        # token. Injected via git's insteadOf rather than the install URL so the
+        # credential never reaches a pip command line or its output.
+        #
+        # --no-deps on the pipeline: class_pipeline is stdlib + ffmpeg, and its
+        # declared extras (faster-whisper, onnxruntime, numpy) serve the local
+        # transcriber fallback, which every test here replaces with a mock.
+        # Pulling ~1 GB of CUDA-adjacent wheels onto a size-capped work tmpfs to
+        # then never import them is how a runner ENOSPCs.
+        run: |
+          set -euo pipefail
+          if [ -z "${TOOL_TOKEN:-}" ]; then
+            echo "TSCRIBE_TOOL_TOKEN is not set -- the pipeline is a private dependency" >&2
+            exit 1
+          fi
+          git config --global \
+            url."https://x-access-token:${TOOL_TOKEN}@github.com/".insteadOf \
+            "https://github.com/"
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet \
+            fastapi httpx python-multipart pytest requests \
+            google-api-python-client google-auth
+          .venv/bin/pip install --quiet --no-deps \
+            "transcription-tool @ git+https://github.com/danialrami/tscribe-transcription-tool.git@${PIPELINE_PIN}"
+
+      - name: Confirm the installed pipeline is the pinned one
+        # The same question /version answers at runtime, asked at build time:
+        # read the commit the installer actually recorded, not the one we asked
+        # for. An install that silently resolved elsewhere fails here.
+        run: |
+          set -euo pipefail
+          .venv/bin/python -c "
+          import json, sys
+          from importlib.metadata import distribution
+          raw = distribution('transcription-tool').read_text('direct_url.json')
+          got = json.loads(raw)['vcs_info']['commit_id']
+          want = '${PIPELINE_PIN}'
+          print('installed:', got)
+          print('pinned   :', want)
+          sys.exit(0 if got == want else 1)
+          "
+
+      - name: Test suite
+        env:
+          TSCRIBE_API_KEY: test-key
+        run: .venv/bin/python -m pytest -q
