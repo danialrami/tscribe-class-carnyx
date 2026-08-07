@@ -24,7 +24,7 @@ transcript it couldn't prove.
 | `GET /healthz` | none | liveness |
 | `POST /jobs` | `X-API-Key` | **primary** — JSON `{"drive_file_id": "..."}`; carnyx downloads via the service account and (optionally) writes the transcript back |
 | `POST /jobs/upload` | `X-API-Key` | secondary — multipart file upload (only for files under the tunnel's ~100 MB limit) |
-| `GET /jobs/{id}` | `X-API-Key` | poll status; on `done`, returns `transcript`, `report`, and (if written back) `transcript_file_id` |
+| `GET /jobs/{id}` | `X-API-Key` | poll status; returns `verified`, and on `done` the `transcript`, `report`, and (if written back) `transcript_file_id` |
 
 ### `POST /jobs` body
 
@@ -38,6 +38,38 @@ transcript it couldn't prove.
 }
 ```
 
+### Reading a job: `verified` is the only field that authorises use
+
+**`verified` is the gate, not the presence of a transcript.** It is true only when
+`status == "done"` and the contract report passed.
+
+A **failed** job may still carry a `transcript` and a full `report`. That
+transcript is *evidence, not a deliverable* — it exists so a contract failure can
+be audited and, when a check turns out to have misfired, recovered by hand. Never
+synthesize a study guide from it without a human decision.
+
+This is a change of behaviour, and it was earned. On **2026-08-06** a four-hour
+class failed the gate on a single check that had divided a chunk's word count by
+the chunk's entire duration while calling that duration "detected speech." What
+survived the job was one line of prose: the report was gone, so nobody could see
+the denominator was wrong; the transcript was gone, so the only way to look at the
+evidence was to spend four more hours of GPU time. When a gate is right, throwing
+away the evidence costs a debugging session. When a gate is wrong, it costs the
+day's material and teaches whoever reads the report to stop believing the gate.
+
+So a contract failure now **flags rather than empties**:
+
+| field | on a contract failure |
+|-------|----------------------|
+| `status` | `failed` (unchanged) |
+| `verified` | `false` |
+| `transcript` | the unverified text, retained |
+| `report` | every check, passing rows included |
+| `transcript_file_id` / `moved` | `null` / `[]` — nothing written back, nothing moved |
+
+The passing rows matter as much as the failing one: they are how a reader tells
+"a chunk really was dropped" from "the checker misfired."
+
 ### Why the service account (`drive_file_id`) is the primary path
 
 Cloudflare's proxied-body limit (100 MB Free/Pro, 200 MB Business, 500 MB Ent)
@@ -49,10 +81,11 @@ transcript back to `dest_folder_id` and groups the source assets with a
 non-destructive **move**. Only a small JSON request and the small transcript cross
 the tunnel. See [deploy/README.md](deploy/README.md).
 
-**Data safety:** the transcript text is always returned in the job result even if
-the Drive write-back fails (`upload_error` is reported, the transcript is never
-lost). Grouping uses move (reparent), never copy-then-delete, and nothing is
-hard-deleted.
+**Data safety:** the transcript text is always returned in the job result — even
+if the Drive write-back fails (`upload_error` is reported, the transcript is never
+lost), and now even if the *contract* fails. Grouping uses move (reparent), never
+copy-then-delete, and nothing is hard-deleted. Write-back and grouping still
+happen only after a **verified** transcript.
 
 ## Run locally
 
@@ -84,8 +117,11 @@ uvicorn server.app:app --host 127.0.0.1 --port 6390
 TSCRIBE_API_KEY=test-key pytest -q   # mock transcriber; needs ffmpeg on PATH
 ```
 
-Proves auth is enforced and that a job runs through the real `class_pipeline` and
-surfaces an `ok` verification report (`4 passed`).
+Proves auth is enforced, that a job runs through the real `class_pipeline` and
+surfaces an `ok` verification report, that a failed Drive write-back logs an honest
+per-file grouping skip, and that a **contract failure keeps its transcript and
+report while leaving `verified` false and writing nothing back**
+(`tests/test_failed_job_keeps_evidence.py`).
 
 ## Deploy
 
