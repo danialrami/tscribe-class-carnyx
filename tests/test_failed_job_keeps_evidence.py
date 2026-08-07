@@ -43,6 +43,23 @@ from server import config, jobs  # noqa: E402
 client = TestClient(app_module.app)
 
 
+# Deterministic non-repetitive filler. " ".join(["lorem"] * n) is 100%
+# back-to-back repetition, which the pipeline's degeneracy check correctly reads
+# as a transcriber loop. Synthetic text standing in for speech has to look like
+# speech in the ways the contract measures.
+_VOCAB = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo "
+          "lima mike november oscar papa quebec romeo sierra tango uniform "
+          "victor whiskey xray yankee zulu").split()
+
+
+def _words(n: int, seed: int = 1234) -> str:
+    import random
+    rng = random.Random(seed)
+    return " ".join(rng.choice(_VOCAB) for _ in range(n))
+
+
+
+
 class DroppingTranscriber:
     """Returns nothing for the first chunk -- a genuine silent failure, the kind
     the contract exists to catch -- and real text for the rest."""
@@ -57,7 +74,7 @@ class DroppingTranscriber:
         if idx == 0:
             return "", None
         dur = probe_duration(audio_path)
-        return " ".join(["lorem"] * max(1, int(120 * dur / 60.0))), None
+        return _words(max(1, int(120 * dur / 60.0))), None
 
 
 @pytest.fixture(autouse=True)
@@ -142,7 +159,7 @@ def test_the_report_is_retained_with_all_of_its_rows(failed_job):
 def test_the_unverified_transcript_is_retained(failed_job):
     assert failed_job.transcript
     assert "# Class Transcript" in failed_job.transcript
-    assert "lorem" in failed_job.transcript          # the chunks that did work
+    assert any(w in failed_job.transcript for w in _VOCAB)  # the chunks that did work
 
 
 def test_the_api_surfaces_both_over_http(failed_job):
@@ -166,7 +183,7 @@ def test_a_verified_job_still_reports_verified(tone_wav, monkeypatch):
         def transcribe(self, audio_path: str):
             from transcription_tool.class_pipeline.splitter import probe_duration
             dur = probe_duration(audio_path)
-            return " ".join(["lorem"] * max(1, int(120 * dur / 60.0))), None
+            return _words(max(1, int(120 * dur / 60.0))), None
 
     config.transcriber_factory = lambda: GoodTranscriber()
     monkeypatch.setattr(jobs, "_download_url", lambda url, dest: shutil.copy(tone_wav, dest))
