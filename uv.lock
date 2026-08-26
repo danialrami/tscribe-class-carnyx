@@ -1538,7 +1538,7 @@ wheels = [
 [[package]]
 name = "transcription-tool"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/danialrami/tscribe-transcription-tool.git#3a33bca17ed4f55130068a4a8253c0478e2e7623" }
+source = { git = "ssh://git@github.com/danialrami/tscribe-transcription-tool.git#9d1e49247574016064805970edd03e7b8feee5f9" }
 dependencies = [
     { name = "click" },
     { name = "faster-whisper" },
