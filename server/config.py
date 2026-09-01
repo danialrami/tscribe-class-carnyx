@@ -19,7 +19,11 @@ import requests
 @dataclass
 class Settings:
     api_key: str = field(default_factory=lambda: os.environ.get("TSCRIBE_API_KEY", ""))
-    chunk_minutes: float = float(os.environ.get("TSCRIBE_CHUNK_MINUTES", "15"))
+    # Chunk length in minutes. Kept at 12 (not 15) so a 16k/16-bit mono WAV chunk
+    # stays under LiteLLM's non-configurable 25 MB multipart upload limit: a
+    # 12-min chunk is ~22 MB worst case with the 10s snap window (a 15-min chunk
+    # is ~28 MB and gets rejected, silently falling back to whisper-small).
+    chunk_minutes: float = float(os.environ.get("TSCRIBE_CHUNK_MINUTES", "12"))
     workers: int = int(os.environ.get("TSCRIBE_WORKERS", "2"))
     snap_window_s: float = float(os.environ.get("TSCRIBE_SNAP_WINDOW_S", "10"))
     # Max bytes the server will accept for a direct upload or pull (sanity guard).
