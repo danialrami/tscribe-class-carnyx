@@ -21,6 +21,8 @@ stays false, and nothing is written back to Drive. Flag, don't delete.
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import tempfile
 import threading
@@ -28,7 +30,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import requests
 
@@ -36,6 +38,16 @@ from transcription_tool.class_pipeline import ContractViolation, transcribe_clas
 
 from . import config
 from .config import SETTINGS
+from .logfile import get_logger
+
+logger = get_logger("tscribe.jobs", "jobs")
+
+
+def os_whisper_model() -> str:
+    """The transcription model the server asks LiteLLM for. Mirrors
+    transcription_tool.transcriber's env read (TRANSCRIPTION_MODEL), falling back
+    to a stable label when the server runs without it configured."""
+    return os.environ.get("TRANSCRIPTION_MODEL", "Systran/faster-whisper-large-v3")
 
 
 @dataclass
@@ -115,8 +127,118 @@ def _report_to_dict(report) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Failure diagnostics -- the four fields that pin a degenerate chunk in one run.
+# Logged on a contract failure so the next failure is a one-run diagnosis
+# instead of a guess. They mirror the verifier's own defnitions (verify.py):
+# loop coverage is a fraction of tokens inside back-to-back repeated n-grams.
+# --------------------------------------------------------------------------- #
+
+_DEGENERATE_RE = re.compile(r"^chunk\[(\d+)\]\.no_degenerate_output$")
+
+
+def _chunk_time_spans(transcript: str) -> dict:
+    """Map chunk index -> (start_s, end_s) parsed from the reassembled
+    transcript's `## [HH:MM:SS]` headers. Header order == chunk order."""
+    stamps = [int(h) * 3600 + int(m) * 60 + int(s)
+              for h, m, s in re.findall(r"^##\s*\[(\d{2}):(\d{2}):(\d{2})\]",
+                                        transcript or "", re.MULTILINE)]
+    spans = {}
+    for i, start in enumerate(stamps):
+        end = stamps[i + 1] if i + 1 < len(stamps) else None
+        spans[i] = (start, end)
+    return spans
+
+
+def _loop_run_locations(text: str, n: int = 4, min_runs: int = 3) -> List[dict]:
+    """Locate back-to-back repeated n-gram runs in chunk text. Token-normalised
+    exactly like verify._loop_coverage (lowercase, punctuation dropped). Returns
+    [{gram, start_char, end_char, runs}] for every run meeting min_runs."""
+    toks = re.findall(r"[a-z0-9']+", (text or "").lower())
+    if len(toks) < n * min_runs:
+        return []
+    runs = []
+    i = 0
+    while i <= len(toks) - n:
+        gram = toks[i:i + n]
+        j = i + n
+        while j + n <= len(toks) and toks[j:j + n] == gram:
+            j += n
+        if (j - i) // n >= min_runs:
+            runs.append({
+                "gram": " ".join(gram),
+                "repeat": (j - i) // n,
+                "start_char": len(" ".join(toks[:i])) + (1 if i else 0),
+            })
+            i = j
+        else:
+            i += 1
+    return runs
+
+
+def _failure_diagnostics(job: "Job", report: dict, transcript: Optional[str]) -> dict:
+    """Assemble the four fields the contract failure needs to be diagnosable in
+    one run: per-chunk degeneration %, chunk time-span, decoding params, and the
+    transcript text where a loop starts."""
+    spans = _chunk_time_spans(transcript or "")
+    checks = report.get("checks", []) if report else []
+    per_chunk: dict = {}
+    for c in checks:
+        m = _DEGENERATE_RE.match(c.get("name", ""))
+        if m:
+            per_chunk[int(m.group(1))] = {
+                "ok": c.get("ok"),
+                "detail": c.get("detail", ""),
+                "span_s": spans.get(int(m.group(1))),
+            }
+    # Only focus loop-location on chunks that actually tripped the check.
+    looped = sorted(i for i, d in per_chunk.items() if d["ok"] is False)
+
+    snippet = None
+    loc = None
+    # Keep the `## [HH:MM:SS]` chunk headers so we can navigate to a chunk;
+    # strip only the leading `# Class Transcript` title line.
+    body = re.sub(r"^#\s+[^\n]*$", "", transcript or "", flags=re.MULTILINE)
+    span_range = spans.get(looped[0]) if looped else None
+    if span_range is not None:
+        start_s, end_s = span_range
+        chunk_text = body.split(f"## [{_fmt(start_s)}]")[-1]
+        if end_s is not None:
+            chunk_text = chunk_text.split(f"## [{_fmt(end_s)}]")[0]
+        locs = _loop_run_locations(chunk_text)
+        if locs:
+            loc = locs[0]
+            start = loc["start_char"]
+            snippet = chunk_text[max(0, start - 120): start + 200]
+
+    return {
+        "chunk_loop_fraction": per_chunk,
+        "decoding": {
+            "path": "remote",  # carnyx-first via LiteLLM->speaches, no local GPU decode
+            "model": os_whisper_model(),
+            "temperature": 0.0,          # tscribe sends only model+language; speaches default
+            "vad_filter": False,         # not requested by tscribe
+            "no_repeat_ngram_size": None,       # not applied by speaches stt router
+            "condition_on_previous_text": None,  # not passed; faster-whisper default
+        },
+        "loop_start": {"chunk": looped[0] if looped else None, "loc": loc,
+                       "snippet": snippet},
+    }
+
+
+def _fmt(seconds: int) -> str:
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{sec:02d}"
+
+
 def _transcript_name(audio_path: Path) -> str:
     return f"{audio_path.stem}_transcript.md"
+
+
+def word_count_of(text: str) -> int:
+    return len((text or "").split())
 
 
 def _run(
@@ -130,6 +252,7 @@ def _run(
     out = work / "transcript.md"
     try:
         job.touch("running")
+        logger.info("job=%s running source=%s", job.id, job.source)
         result = transcribe_class(
             input_path=str(local_audio),
             output_path=str(out),
@@ -172,6 +295,11 @@ def _run(
                     )
 
         job.touch("done")
+        logger.info(
+            "job=%s done verified=%s words=%s writeback=%s moved=%s",
+            job.id, job.verified, word_count_of(job.transcript or ""),
+            job.transcript_file_id, job.moved,
+        )
     except ContractViolation as e:
         # Keep the evidence. The gate is unchanged — status stays `failed`,
         # `verified` stays False, nothing is written back to Drive, no source is
@@ -184,6 +312,21 @@ def _run(
             job.report = _report_to_dict(e.report)
         if getattr(e, "transcript", None):
             job.transcript = e.transcript
+        # Diagnosable in one run: per-chunk degeneration %, chunk time-span,
+        # decoding params, and the transcript where the loop starts.
+        try:
+            diag = _failure_diagnostics(job, job.report, job.transcript)
+            logger.info(
+                "job=%s contract_failed checks=%s chunk_loop_fraction=%s decoding=%s loop_start=%s",
+                job.id,
+                [c["name"] for c in (job.report or {}).get("checks", [])
+                 if not c.get("ok")],
+                diag["chunk_loop_fraction"],
+                diag["decoding"],
+                diag["loop_start"],
+            )
+        except Exception as log_err:  # noqa: BLE001 - never let logging mask the failure
+            logger.warning("job=%s diagnostics failed: %s", job.id, log_err)
         job.touch("failed")
     except Exception as e:  # noqa: BLE001 - report any failure honestly
         job.error = f"{type(e).__name__}: {e}"
