@@ -6,3 +6,6 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 credentials/
+
+# runtime diagnostic logs (7-day retention, written by server)
+logs/
