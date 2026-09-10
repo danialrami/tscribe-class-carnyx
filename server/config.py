@@ -83,7 +83,11 @@ class TimedRemoteTranscriber:
 
         with open(audio_path, "rb") as f:
             files = {"file": (Path(audio_path).name, f, "audio/wav")}
-            data = {"model": self._inner.transcription_model, "language": self._inner.language}
+            data = {
+                "model": self._inner.transcription_model,
+                "language": self._inner.language,
+                "vad_filter": "true",
+            }
 
             response = requests.post(
                 url, headers=headers, files=files, data=data, timeout=self._timeout_s
